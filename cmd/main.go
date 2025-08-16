@@ -5,7 +5,6 @@ import (
 	"TestEffectiveMobile/internal/config"
 	"TestEffectiveMobile/pkg/logger"
 	"context"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -18,7 +17,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	logger.GetLoggerFromCtx(ctx).Info("cfg", zap.Any("cfg", cfg))
 	newApp := app.New(cfg, ctx)
 	newApp.MustRun()
 }

@@ -4,10 +4,9 @@ import (
 	"TestEffectiveMobile/internal/config"
 	"TestEffectiveMobile/internal/models"
 	"TestEffectiveMobile/internal/service"
+	"TestEffectiveMobile/pkg/logger"
 	"context"
-	"encoding/json"
-	"github.com/gorilla/mux"
-	"io"
+	"github.com/gin-gonic/gin"
 	"net/http"
 )
 
@@ -26,254 +25,167 @@ func New(srv service.SubscriptionServiceInterface, cfg *config.Config, ctx conte
 }
 
 func (s *SubscriptionServer) Run() error {
-	router := mux.NewRouter()
-	router.HandleFunc("/api/v1/create", CreateSubscriptionHandler(s))
-	router.HandleFunc("/api/v1/read/{id}", ReadSubscriptionHandler(s))
-	router.HandleFunc("/api/v1/update/{id}", UpdateSubscriptionHandler(s))
-	router.HandleFunc("/api/v1/delete/{id}", DeleteSubscriptionHandler(s))
-	router.HandleFunc("/api/v1/list/{user_id}", ListSubscriptionsHandler(s))
-	router.HandleFunc("/api/v1/sum", CalculateSumSubscriptionsHandler(s))
-	return http.ListenAndServe(s.cfg.Host+":"+s.cfg.Port, router)
+	router := gin.Default()
+	logger.GetLoggerFromCtx(s.ctx).Info("gin framework is running")
+	api := router.Group("/api/v1")
+	{
+		api.POST("/create", CreateSubscriptionHandler(s))
+		api.GET("/read/:id", ReadSubscriptionHandler(s))
+		api.PUT("/update/:id", UpdateSubscriptionHandler(s))
+		api.DELETE("/delete/:id", DeleteSubscriptionHandler(s))
+		api.GET("/list/:user_id", ListSubscriptionsHandler(s))
+		api.GET("/sum", CalculateSumSubscriptionsHandler(s))
+	}
+	return router.Run(s.cfg.Host + ":" + s.cfg.Port)
 }
 
-func CreateSubscriptionHandler(s *SubscriptionServer) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func CreateSubscriptionHandler(s *SubscriptionServer) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error1"}`))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error1"})
 				return
 			}
 		}()
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte(`{"error": "Method not allowed"}`))
+		if c.Request.Method != http.MethodPost {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		request := new(models.Subscription)
-		defer func(Body io.ReadCloser) {
-			err := Body.Close()
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error4"}`))
-			}
-		}(r.Body)
-		err := json.NewDecoder(r.Body).Decode(request)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error5"}`))
+		var request *models.Subscription
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error2"})
 			return
 		}
 		id, err := s.Service.Create(request)
 		if err != nil {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			err = json.NewEncoder(w).Encode(models.BadResponse{Error: err.Error()})
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error6"}`))
-			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error3"})
 			return
 		}
-		err = json.NewEncoder(w).Encode(models.ID{Id: id})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error7"}`))
-		}
+		c.JSON(http.StatusOK, models.ID{Id: id})
 	}
 }
 
-func ReadSubscriptionHandler(s *SubscriptionServer) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ReadSubscriptionHandler(s *SubscriptionServer) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error1"}`))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error1"})
 				return
 			}
 		}()
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte(`{"error": "Method not allowed"}`))
+		if c.Request.Method != http.MethodGet {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
 			return
 		}
-		id := mux.Vars(r)["id"]
+		id := c.Param("id")
 		sub, err := s.Service.Read(id)
 		if err != nil {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			err = json.NewEncoder(w).Encode(models.BadResponse{Error: err.Error()})
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error6"}`))
-			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error2"})
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		err = json.NewEncoder(w).Encode(models.Subscription{
+		c.JSON(http.StatusOK, models.Subscription{
 			ServiceName: sub.ServiceName,
 			Price:       sub.Price,
+			Id:          id,
 			UserId:      sub.UserId,
 			StartDate:   sub.StartDate,
 			EndDate:     sub.EndDate,
-			Id:          sub.Id,
 		})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error7"}`))
-		}
 	}
 }
 
-func UpdateSubscriptionHandler(s *SubscriptionServer) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func UpdateSubscriptionHandler(s *SubscriptionServer) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error1"}`))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error1"})
 				return
 			}
 		}()
-		if r.Method != http.MethodPut {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte(`{"error": "Method not allowed"}`))
+		if c.Request.Method != http.MethodPut {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
 			return
 		}
-		id := mux.Vars(r)["id"]
-		request := new(models.UpdateSubscription)
-		defer func(Body io.ReadCloser) {
-			err := Body.Close()
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error4"}`))
-			}
-		}(r.Body)
-		err := json.NewDecoder(r.Body).Decode(request)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error5"}`))
+		id := c.Param("id")
+		var request *models.UpdateSubscription
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error2"})
 			return
 		}
-		err = s.Service.Update(id, request)
+		err := s.Service.Update(id, request)
 		if err != nil {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			err = json.NewEncoder(w).Encode(models.BadResponse{Error: err.Error()})
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error6"}`))
-			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error3"})
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		err = json.NewEncoder(w).Encode(models.GoodResponse{Message: "Updated"})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error7"}`))
-		}
+		c.JSON(http.StatusOK, models.GoodResponse{Message: "Updated"})
 	}
 }
 
-func DeleteSubscriptionHandler(s *SubscriptionServer) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func DeleteSubscriptionHandler(s *SubscriptionServer) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error1"}`))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error1"})
 				return
 			}
 		}()
-		if r.Method != http.MethodDelete {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte(`{"error": "Method not allowed"}`))
+		if c.Request.Method != http.MethodDelete {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
 			return
 		}
-		id := mux.Vars(r)["id"]
+		id := c.Param("id")
 		err := s.Service.Delete(id)
 		if err != nil {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			err = json.NewEncoder(w).Encode(models.BadResponse{Error: err.Error()})
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error6"}`))
-			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error2"})
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		err = json.NewEncoder(w).Encode(models.GoodResponse{Message: "Deleted"})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error7"}`))
-		}
+		c.JSON(http.StatusOK, models.GoodResponse{Message: "Deleted"})
 	}
 }
 
-func ListSubscriptionsHandler(s *SubscriptionServer) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ListSubscriptionsHandler(s *SubscriptionServer) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error1"}`))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error1"})
 				return
 			}
 		}()
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte(`{"error": "Method not allowed"}`))
+		if c.Request.Method != http.MethodGet {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
 			return
 		}
-		userId := mux.Vars(r)["user_id"]
+		userId := c.Param("user_id")
 		subs, err := s.Service.ListSubscriptions(userId)
 		if err != nil {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			err = json.NewEncoder(w).Encode(models.BadResponse{Error: err.Error()})
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error6"}`))
-			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error2"})
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		err = json.NewEncoder(w).Encode(models.ListSubscriptionsResponse{Subscriptions: subs})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error7"}`))
-		}
+		c.JSON(http.StatusOK, models.ListSubscriptionsResponse{Subscriptions: subs})
 	}
 }
 
-func CalculateSumSubscriptionsHandler(s *SubscriptionServer) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func CalculateSumSubscriptionsHandler(s *SubscriptionServer) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error1"}`))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error1"})
 				return
 			}
 		}()
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte(`{"error": "Method not allowed"}`))
+		if c.Request.Method != http.MethodGet {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
 			return
 		}
-		query := r.URL.Query()
-		startDate := query.Get("start_date")
-		endDate := query.Get("end_date")
-		userID := query.Get("user_id")
-		nameService := query.Get("service_name")
+		startDate := c.Query("start_date")
+		endDate := c.Query("end_date")
+		userID := c.Query("user_id")
+		nameService := c.Query("service_name")
 		sum, err := s.Service.CalculateSumSubscriptions(userID, startDate, endDate, nameService)
 		if err != nil {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			err = json.NewEncoder(w).Encode(models.BadResponse{Error: err.Error()})
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error": "Internal server error6"}`))
-			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error2"})
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		err = json.NewEncoder(w).Encode(models.SumSubscriptionsResponse{Sum: sum})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error": "Internal server error7"}`))
-		}
+		c.JSON(http.StatusOK, models.SumSubscriptionsResponse{Sum: sum})
 	}
 }
