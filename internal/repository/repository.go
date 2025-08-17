@@ -2,6 +2,7 @@ package repository
 
 import (
 	"TestEffectiveMobile/internal/models"
+	"TestEffectiveMobile/pkg/suberrors"
 	"TestEffectiveMobile/pkg/timeparser"
 	"context"
 	"errors"
@@ -67,6 +68,9 @@ func (s *SubscriptionRepository) Read(id string) (*models.Subscription, error) {
 		&startDate,
 		&endDate)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, suberrors.ErrIdSubscriptionNotFound
+		}
 		return nil, fmt.Errorf("error reading subscription: %w", err)
 	}
 	sub.StartDate = startDate.Format("01-2006")
@@ -88,12 +92,13 @@ func (s *SubscriptionRepository) Update(id string, sub *models.UpdateSubscriptio
     `
 	stD, err := timeparser.ParseMonthYear(sub.StartDate)
 	if err != nil {
-		return fmt.Errorf("error creating subscription: %w", err)
+		return fmt.Errorf("error updating subscription: %w", err)
 	}
 	endD, err := timeparser.ParseMonthYear(sub.EndDate)
 	if err != nil {
-		return fmt.Errorf("error creating subscription: %w", err)
+		return fmt.Errorf("error updating subscription: %w", err)
 	}
+
 	var updatedID string
 	err = s.db.QueryRow(s.ctx, query,
 		sub.ServiceName,
@@ -104,7 +109,7 @@ func (s *SubscriptionRepository) Update(id string, sub *models.UpdateSubscriptio
 	).Scan(&updatedID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("subscription not found: %w", err)
+			return suberrors.ErrIdSubscriptionNotFound
 		}
 		return fmt.Errorf("failed to update subscription: %w", err)
 	}
@@ -112,11 +117,14 @@ func (s *SubscriptionRepository) Update(id string, sub *models.UpdateSubscriptio
 }
 
 func (s *SubscriptionRepository) Delete(id string) error {
-	_, err := s.db.Exec(s.ctx,
+	res, err := s.db.Exec(s.ctx,
 		"DELETE FROM subscriptions WHERE id = $1",
 		id)
 	if err != nil {
 		return fmt.Errorf("error deleting subscription: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return suberrors.ErrIdSubscriptionNotFound
 	}
 	return nil
 }
@@ -151,6 +159,9 @@ func (s *SubscriptionRepository) ListSubscriptions(userId string) ([]*models.Sub
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
+	if len(subscriptions) == 0 {
+		return nil, suberrors.ErrUserIdNotFound
+	}
 	return subscriptions, nil
 }
 
@@ -158,11 +169,11 @@ func (s *SubscriptionRepository) CalculateSumSubscriptions(userId string, startD
 	var sum int
 	stD, err := timeparser.ParseMonthYear(startDate)
 	if err != nil {
-		return 0, fmt.Errorf("error creating subscription: %w", err)
+		return 0, fmt.Errorf("error calculating sum subscriptions: %w", err)
 	}
 	endD, err := timeparser.ParseMonthYear(endDate)
 	if err != nil {
-		return 0, fmt.Errorf("error creating subscription: %w", err)
+		return 0, fmt.Errorf("error calculating sum subscriptions: %w", err)
 	}
 	sql := "SELECT COALESCE(SUM(price), 0) FROM subscriptions WHERE start_date <= $1 AND end_date >= $2"
 	args := []interface{}{
@@ -174,14 +185,28 @@ func (s *SubscriptionRepository) CalculateSumSubscriptions(userId string, startD
 		args = append(args, serviceName)
 		paramIndex++
 	}
-
 	if userId != "" {
 		sql += fmt.Sprintf(" AND user_id = $%d", paramIndex)
 		args = append(args, userId)
+		exists, err := s.userExists(userId)
+		if err != nil {
+			return 0, fmt.Errorf("error checking user existence: %w", err)
+		}
+		if !exists {
+			return 0, suberrors.ErrUserIdNotFound
+		}
 	}
 	err = s.db.QueryRow(s.ctx, sql, args...).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("error calculating sum subscriptions: %w", err)
 	}
 	return sum, nil
+}
+
+func (s *SubscriptionRepository) userExists(userId string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(s.ctx,
+		"SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id = $1)",
+		userId).Scan(&exists)
+	return exists, err
 }

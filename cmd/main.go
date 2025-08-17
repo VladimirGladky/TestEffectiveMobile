@@ -7,6 +7,12 @@ import (
 	"context"
 )
 
+// @title Сервис подписок API
+// @version 1.0.0
+// @description REST-сервис для агрегации данных об онлайн-подписках пользователей.
+// @host localhost:4047
+// @BasePath /api/v1
+
 func main() {
 	ctx := context.Background()
 	cfg, err := config.NewConfig()

@@ -93,6 +93,6 @@ func (s *SubscriptionService) CalculateSumSubscriptions(userId string, startDate
 }
 
 func IsValidMMYYYY(dateStr string) bool {
-	matched, _ := regexp.MatchString(`^(0[1-9]|1[0-2])-20[2-9][0-9]$`, dateStr)
+	matched, _ := regexp.MatchString(`^(0[1-9]|1[0-2])-20[0-9][0-9]$`, dateStr)
 	return matched
 }
